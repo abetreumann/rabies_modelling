@@ -1,0 +1,360 @@
+install.packages("shiny")
+install.packages("plotly")
+
+
+library(shiny)
+library(deSolve)
+library(plotly)
+library(ggplot2)
+
+
+################################
+################################
+#                              #
+#         Functions            #
+#                              #
+################################
+################################ 
+
+
+################################
+#        Transmissible         #
+################################
+
+#Ordinary differential equations (ODEs) for the transmission of a self-spreading vaccine, and pathogen transmission
+si_TmV <- function(time, state, parameters) {
+  with(as.list(c(state, parameters,time)), {
+    
+    N <- S+V+Iv+Ip+R                      #N=total population size
+    
+    b <- 1/D_life                         #b=death rate, or 1/average bat lifespan
+    m <- b                                #m=birth rate, equal to death rate
+    
+    #vaccine transmission parameters
+    gamma_v <- 1/D_inf_v                  #rate of recovery from infection with the vaccine, i.e., 1/time infectious
+    beta_v <- R0_v*(gamma_v+b)            #rate of vaccine transmission
+
+    
+    #pathogen transmission parameters
+    gamma_p <- 1/D_inf_p                  #rate of recovery from infection with the pathogen
+    beta_p <- R0_p*(gamma_p+b)            #rate of pathogen transmission
+    omega_p <- 1/D_imm_p                  #rate of immune waning after recovery from infection
+    
+    
+    #ODEs
+    dS  <- -b*S + m*N - (beta_v*S*Iv)  - beta_p*S*Ip + omega_p*R   #Susceptible category (susceptible to both vaccine and pathogen)
+    dIv <- -b*Iv + (beta_v*(S+R)*Iv) - gamma_v*Iv                  #Infected with the vaccine
+    dV  <- -b*V + gamma_v*Iv                                       #Vaccinated but no longer able to transmit the vaccine to others
+    
+    dIp <- -b*Ip + beta_p*S*Ip - gamma_p*Ip                        #Infected with the pathogen
+    dR  <- -b*R + gamma_p*Ip - omega_p*R - (beta_v*R*Iv)           #Recovered from infection with the pathogen
+    
+    dC <- + beta_p*S*Ip                                            #A count of the number of bats that become infected with the pathogen. Not part of the total population
+    
+    return(list(c( dS, dIv, dV, dIp, dR, dC)))
+  })
+}
+
+
+################################
+################################
+#                              #
+#              UI              #
+#                              #
+################################
+################################ 
+# Define UI for app that draws a histogram ----
+ui <- fluidPage(
+  
+  # App title ----
+  titlePanel("Simulating self-spreading vaccines"),
+  
+  # Sidebar layout with input and output definitions ----
+  sidebarLayout(
+    
+    # Sidebar panel for inputs ----
+    sidebarPanel(
+      
+      h4("Vaccine parameters"),
+      
+      helpText("Explore the dynamics of a self-spreading vaccine compared to a traditional vaccine."),
+      
+      
+      # Input: Slider for initial application ----
+      sliderInput(inputId = "A0",
+                  label = "Percent of bat colony directly given vaccine at t=0:",
+                  min = 0,
+                  max = 100,
+                  value = 10,
+                  step=5),
+      
+      
+      
+      # Input: Slider for R0 ----
+      sliderInput(inputId = "R0",
+                  label = "Basic reproduction number of the transmissible vaccine:",
+                  min = 0,
+                  max = 5,
+                  value = 0,
+                  step=0.25),
+      br(),
+      
+      
+      br(),
+      
+      h4(HTML("Whilst playing around with the vaccination parameters, consider the following questions:<br/><br/>
+         (1) To start with, the rate basic reproduction number of the transmissible vaccine is set to 0. This means, it behaves the same as a traditional vaccine. Start by looking at just this traditional vaccine. 
+         When is the number of vaccinated bats the highest? Why might the number of bats vaccinated decrease over time? <br/><br/>
+         (2) Now that you've looked at the traditional vaccine, start increasing the basic reproduction number for the transmissible vaccine.
+         Does transmission improve the percent of the population that can be vaccinated? When are the most bats vaccinated, and how does this compare to the traditional vaccine?<br/><br/>
+         (3) Traditional vaccines don't reach as many bats, but they are much cheaper to produce. Which method might be more cost effective if transmissible vaccines are twice as expensive as traditional vaccines?"
+      )),
+      
+      br()       
+    ),
+    
+    # Main panel for displaying outputs ----
+    mainPanel(
+      tabsetPanel(
+        tabPanel(
+          title = "Vaccine Spread over Time",
+          h3("Vaccine spread time series", align="left"),
+          br(),
+          
+          # Output: plot ----
+          plotlyOutput(outputId = "VaccinePlot", height = "500px"),
+          
+          helpText("Total bats vaccinated (%) after directly giving vaccine to x% of bats at time=0 for (a) traditional and (b) transmissible vaccine."),   
+          
+          br(),
+          
+          # Output: summary text ----
+          span(textOutput("SummaryN"), style="font-size:17px"),
+          
+          # Output: summary text ----
+          span(textOutput("SummaryTm"), style="font-size:17px"),
+          
+        ),
+        tabPanel(
+          title = "Disease Spread over Time",
+          h3("Outbreak with vaccination time series", align="left"),
+          br(),
+          
+          # Output: plot ----
+          plotlyOutput(outputId = "VaccinePlot_p", height = "500px"),
+          
+          helpText("Bats infected with the pathogen (%) over time with different methods of vaccination. 
+               The dotted black line shows an outbreak in an unvaccinated population."),      
+          
+          br(),
+        ),
+        tabPanel(
+          title = "Impact of Vaccine on Disease",
+          h3("Outbreak reduction with vaccination", align="left"),
+          br(),
+          plotlyOutput(outputId = "BarGraph", height = "500px"),
+          
+          helpText("The % reduction in the total number of bats that became infected with the pathogen, compared to an unvaccinated population.")
+        )
+      ))
+  )
+)
+
+################################
+################################
+#                              #
+#             Server           #
+#                              #
+################################
+################################ 
+
+# Define server logic required to draw an outbreak ----
+server <- function(input, output) {
+  
+  #parametersInput
+  
+  ParametersInput<-reactive({
+    
+    
+    parameters= c(D_life=1,
+                  D_inf_v=14/365,
+                  R0_v=input$R0,
+                  eta=0,
+                  D_inf_p=21/365,
+                  D_imm_p=.25,
+                  R0_p=5
+                  
+    )
+    
+    return(parameters)
+    
+  })
+  
+ 
+  
+  ModelInput_Tm<-reactive({
+    
+    
+    init <- c(S = 1-input$A0/100, Iv=input$A0/100, V=0, Ip=0, R=0, C=0)
+    times <- seq(0, 2, by = 1/365) 
+    return(out <- as.data.frame(ode(y = init, times = times, func = si_TmV, parms = ParametersInput())))
+    
+    
+  })
+  
+  
+  ModelInput_N<-reactive({
+    
+    parameters= c(D_life=1,
+                  D_inf_v=14/365,
+                  R0_v=0,
+                  eta=0,
+                  D_inf_p=21/365,
+                  D_imm_p=.25,
+                  R0_p=5)
+    init <- c(S = 1-input$A0/100, Iv=input$A0/100, V=0, Ip=0, R=0, C=0)
+    times <- seq(0, 2, by = 1/365) 
+    return(out <- as.data.frame(ode(y = init, times = times, func = si_TmV, parms = parameters)))
+    
+    
+  })
+ 
+  
+  
+  ModelInput_Tm_p<-reactive({
+    
+    
+    init <- c(S = 1-input$A0/100, Iv=input$A0/100, V=0, Ip=1/100, R=0, C=0)
+    times <- seq(0, 2, by = 1/365) 
+    return(out <- as.data.frame(ode(y = init, times = times, func = si_TmV, parms = ParametersInput())))
+    
+    
+  })
+  
+  
+  ModelInput_N_p<-reactive({
+    
+    parameters= c(D_life=1,
+                  D_inf_v=14/365,
+                  R0_v=0,
+                  eta=0,
+                  D_inf_p=21/365,
+                  D_imm_p=.25,
+                  R0_p=5)
+    init <- c(S = 1-input$A0/100, Iv=input$A0/100, V=0, Ip=1/100, R=0, C=0)
+    times <- seq(0, 2, by = 1/365) 
+    return(out <- as.data.frame(ode(y = init, times = times, func = si_TmV, parms = parameters)))
+    
+    
+  })
+  
+  ModelInput_Pathogen_only<-reactive({
+    
+    parameters= c(D_life=1,
+                  D_inf_v=14/365,
+                  R0_v=0,
+                  eta=0,
+                  D_inf_p=21/365,
+                  D_imm_p=.25,
+                  R0_p=5)
+    init <- c(S = 1, Iv=0, V=0, Ip=1/100, R=0, C=0)
+    times <- seq(0, 2, by = 1/365) 
+    return(out <- as.data.frame(ode(y = init, times = times, func = si_TmV, parms = parameters)))
+    
+    
+  })
+  
+  
+  ################################
+  #                              #
+  #            Outputs           #
+  #                              #
+  ################################
+  
+  
+  output$VaccinePlot <- renderPlotly({
+    
+
+    plot_ly(data = ModelInput_N(), x=~time*12, y = ~(Iv+V)*100, type="scatter", name = 'Traditional vaccine', mode = 'lines', 
+            line = list(color = 'darkorange', width = 4, dash="none"))%>%
+      add_trace(data = ModelInput_Tm(), x=~time*12, y = ~(Iv+V)*100, name = 'Transmissible vaccine', mode = 'lines', 
+                line = list(color = '#1998D5', width = 4, dash="none"))%>%
+      
+      layout( xaxis = list(title="Time (Months)",ticks = 'outside', hoverformat =".1f"), 
+              yaxis = list(title="Population vaccinated (%)",ticks = 'outside', hoverformat =".1f", range=c(0,100)))%>%
+      layout(hovermode = "x unified", legend = list(orientation = 'h', x=.4, y=1.1))%>% 
+      layout(height = 500)
+      
+    
+    
+    
+  })
+  
+  
+  output$SummaryN <- renderText({ 
+    
+    paste("Traditional vaccine: Peak % vaccinated = ", (round(max(ModelInput_N()$Iv+ModelInput_N()$V)*100)), "%.
+           Vaccinated after 1 year =", (round(tail(ModelInput_N()$Iv+ModelInput_N()$V,1)*100)), "%.")
+  })
+  
+
+  output$SummaryTm <- renderText({ 
+    
+    paste("Transmissible vaccine: Peak % vaccinated = ", (round(max(ModelInput_Tm()$Iv+ModelInput_Tm()$V)*100)), "%.
+           Vaccinated after 1 year =", (round(tail(ModelInput_Tm()$Iv+ModelInput_Tm()$V,1)*100)), "%.")
+  })
+  
+  
+  
+  
+  output$VaccinePlot_p <- renderPlotly({
+    
+    
+    plot_ly(data = ModelInput_Tm_p(), x=~time*12, y = ~(Ip)*100, type="scatter", name = 'Transmissible vaccine', mode = 'lines', line = list(color = '#1998D5', width = 4, dash="none"))%>% 
+      add_trace(data = ModelInput_N_p(), x=~time*12, y = ~(Ip)*100, name = 'Traditional vaccine', mode = 'lines', line = list(color = 'darkorange', width = 4, dash="none"))%>% 
+      add_trace(data = ModelInput_Pathogen_only(), x=~time*12, y = ~Ip*100, name='No vaccine', model='lines', line=list(color = 'black', width = 4, dash="dot"))%>%
+      #add_trace(data = ModelInput_Pathogen_only(), x=~time*12, y = ~C, name='No vaccine', model='lines', line=list(color = 'black', width = 2, dash="dot"))%>%
+      
+      
+      layout( xaxis = list(title="Time (Months)",ticks = 'outside', hoverformat =".1f"), 
+              yaxis = list(title="Population <br>Infected with Pathogen (%)",ticks = 'outside', hoverformat =".1f", range=c(0,100)))%>%
+      layout(hovermode = "x unified", legend = list(orientation = 'h', x=.4, y=1.1)) %>% 
+      layout(height = 500)
+    
+    
+    
+    
+  })
+  
+  
+  output$BarGraph <- renderPlotly({
+    
+    plot_ly(x=c("Traditional vaccine", "Transmissible vaccine"),
+            y=c(round((1-((tail(ModelInput_N_p()$C,1)*100)/(tail(ModelInput_Pathogen_only()$C,1)*100)))*100),
+                round((1-((tail(ModelInput_Tm_p()$C,1)*100)/(tail(ModelInput_Pathogen_only()$C,1)*100)))*100)), 
+            type="bar", text=c(round((1-((tail(ModelInput_N_p()$C,1)*100)/(tail(ModelInput_Pathogen_only()$C,1)*100)))*100),
+                               round((1-((tail(ModelInput_Tm_p()$C,1)*100)/(tail(ModelInput_Pathogen_only()$C,1)*100)))*100)), textposition='auto')%>%
+      
+      layout( xaxis = list(title="Vaccine type",ticks = 'outside', hoverformat =".1f"), 
+              yaxis = list(title="Reduction in <br>outbreak size (%)",ticks = 'outside', hoverformat =".1f", range=c(0,100))) %>% 
+      layout(height = 500)
+    
+  })
+  
+  
+  
+}
+
+
+################################
+################################
+#                              #
+#            Run App           #
+#                              #
+################################
+################################ 
+
+shinyApp(ui=ui, server=server)
+
+
+
